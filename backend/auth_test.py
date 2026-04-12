@@ -67,6 +67,9 @@ async def main(message: cl.Message):
             model="qwen3.6-plus",
             messages=history,
             stream=True,
+            extra_body={
+                "enable_thinking": False
+            }
         )
         
         async for part in stream:
