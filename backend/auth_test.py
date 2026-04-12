@@ -40,7 +40,7 @@ async def main(message: cl.Message):
     
     # Call OpenAI (Qwen)
     stream = await client.chat.completions.create(
-        model="qwen3-coder-plus",
+        model="Qwen3.6-Plus",
         messages=[{"role": "user", "content": message.content}],
         stream=True,
     )
