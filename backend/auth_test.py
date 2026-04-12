@@ -45,46 +45,62 @@ async def main(message: cl.Message):
         history = cl.user_session.get("history")
         history.append({"role": "user", "content": message.content})
         
+        # SLIDING WINDOW: Keep only the last 10 messages (plus system prompt)
+        # This keeps the history from growing indefinitely and speeds up processing
+        if len(history) > 11:
+            history = [history[0]] + history[-10:]
+            cl.user_session.set("history", history)
+
+        # Create a message to stream results
+        msg = cl.Message(content="")
+        
         # Start timer
         start_time = time.perf_counter()
+        ttft = None
+        token_count = 0
         
-        # Call OpenAI (Qwen)
-        response = await client.chat.completions.create(
+        # Show a "Thinking" status
+        await cl.Message(content="*Thinking...*", author="System").send()
+
+        # Call OpenAI (Qwen) with streaming
+        stream = await client.chat.completions.create(
             model="qwen3.6-plus",
             messages=history,
-            stream=False,
+            stream=True,
         )
         
+        async for part in stream:
+            if not part.choices:
+                continue
+                
+            token = part.choices[0].delta.content or ""
+            if token:
+                if ttft is None:
+                    ttft = time.perf_counter() - start_time
+                
+                token_count += 1
+                await msg.stream_token(token)
+
         # End timer
         end_time = time.perf_counter()
         duration = end_time - start_time
         
-        content = response.choices[0].message.content
+        # Finalize
+        content = msg.content
         if content:
-            # Add to history
             history.append({"role": "assistant", "content": content})
             cl.user_session.set("history", history)
             
-            # Calculate metrics
-            usage = response.usage
-            total_tokens = usage.total_tokens if usage else 0
-            completion_tokens = usage.completion_tokens if usage else 0
-            tokens_per_sec = completion_tokens / duration if duration > 0 else 0
-            
-            # Create metrics text
+            tokens_per_sec = token_count / duration if duration > 0 else 0
             metrics_text = (
-                f"⏱️ {duration:.2f}s | "
+                f"⏱️ Total: {duration:.2f}s | "
+                f"⚡ TTFT: {ttft:.2f}s | "
                 f"🚀 {tokens_per_sec:.1f} tok/s | "
-                f"📝 {completion_tokens} tokens"
+                f"📝 {token_count} chunks"
             )
             
-            # Send message with metrics as an element
-            await cl.Message(
-                content=content,
-                elements=[
-                    cl.Text(name="Metrics", content=metrics_text, display="inline")
-                ]
-            ).send()
+            msg.elements = [cl.Text(name="Metrics", content=metrics_text, display="inline")]
+            await msg.send()
         else:
             await cl.Message(content="Error: Received empty response from LLM.").send()
 
