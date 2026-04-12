@@ -1,6 +1,7 @@
 import getRouterBasename from '@/lib/router';
 import { Navigate, createBrowserRouter } from 'react-router-dom';
 
+import AdminDocuments from 'pages/AdminDocuments';
 import AuthCallback from 'pages/AuthCallback';
 import Element from 'pages/Element';
 import Env from 'pages/Env';
@@ -13,6 +14,10 @@ export const router = createBrowserRouter(
     {
       path: '/',
       element: <Home />
+    },
+    {
+      path: '/admin/documents',
+      element: <AdminDocuments />
     },
     {
       path: '/env',
