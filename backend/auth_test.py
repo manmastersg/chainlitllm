@@ -46,64 +46,60 @@ async def main(message: cl.Message):
         history.append({"role": "user", "content": message.content})
         
         # SLIDING WINDOW: Keep only the last 10 messages (plus system prompt)
-        # This keeps the history from growing indefinitely and speeds up processing
         if len(history) > 11:
             history = [history[0]] + history[-10:]
             cl.user_session.set("history", history)
 
-        # Create a message to stream results
-        msg = cl.Message(content="")
-        
         # Start timer
         start_time = time.perf_counter()
-        ttft = None
-        token_count = 0
         
         # Show a "Thinking" status
-        await cl.Message(content="*Thinking...*", author="System").send()
+        status_msg = cl.Message(content="*Thinking...*", author="System")
+        await status_msg.send()
 
-        # Call OpenAI (Qwen) with streaming
-        stream = await client.chat.completions.create(
+        # Call OpenAI (Qwen) with streaming DISABLED
+        response = await client.chat.completions.create(
             model="qwen3.6-plus",
             messages=history,
-            stream=True,
+            stream=False,
             extra_body={
                 "enable_thinking": False
             }
         )
         
-        async for part in stream:
-            if not part.choices:
-                continue
-                
-            token = part.choices[0].delta.content or ""
-            if token:
-                if ttft is None:
-                    ttft = time.perf_counter() - start_time
-                
-                token_count += 1
-                await msg.stream_token(token)
-
         # End timer
         end_time = time.perf_counter()
         duration = end_time - start_time
         
-        # Finalize
-        content = msg.content
+        content = response.choices[0].message.content
+        
+        # Remove the status message
+        await status_msg.remove()
+
         if content:
+            # Add assistant response to history
             history.append({"role": "assistant", "content": content})
             cl.user_session.set("history", history)
             
-            tokens_per_sec = token_count / duration if duration > 0 else 0
+            # Calculate metrics
+            usage = response.usage
+            completion_tokens = usage.completion_tokens if usage else 0
+            tokens_per_sec = completion_tokens / duration if duration > 0 else 0
+            
+            # Create metrics text
             metrics_text = (
                 f"⏱️ Total: {duration:.2f}s | "
-                f"⚡ TTFT: {ttft:.2f}s | "
                 f"🚀 {tokens_per_sec:.1f} tok/s | "
-                f"📝 {token_count} chunks"
+                f"📝 {completion_tokens} tokens"
             )
             
-            msg.elements = [cl.Text(name="Metrics", content=metrics_text, display="inline")]
-            await msg.send()
+            # Send message with metrics
+            await cl.Message(
+                content=content,
+                elements=[
+                    cl.Text(name="Metrics", content=metrics_text, display="inline")
+                ]
+            ).send()
         else:
             await cl.Message(content="Error: Received empty response from LLM.").send()
 
