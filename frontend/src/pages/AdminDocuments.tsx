@@ -1,5 +1,7 @@
 import { Navigate } from 'react-router-dom';
 
+import Page from 'pages/Page';
+
 import { useAuth } from '@chainlit/react-client';
 
 const AdminDocuments = () => {
@@ -11,24 +13,19 @@ const AdminDocuments = () => {
   }
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        height: '100vh',
-        width: '100vw',
-        backgroundColor: 'var(--background)'
-      }}
-    >
-      <h1 style={{ color: 'var(--primary)', fontSize: '2rem' }}>
-        Administrator: Document Management
-      </h1>
-      <p style={{ color: 'var(--muted-foreground)' }}>
-        This is where you will upload your RAG documentation.
-      </p>
-    </div>
+    <Page>
+      <div
+        className="flex flex-col items-center justify-center flex-grow"
+        style={{ height: '100%' }}
+      >
+        <h1 className="text-primary text-2xl font-bold">
+          Administrator: Document Management
+        </h1>
+        <p className="text-muted-foreground">
+          This is where you will upload your RAG documentation.
+        </p>
+      </div>
+    </Page>
   );
 };
 
