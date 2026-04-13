@@ -60,25 +60,18 @@ export default function UserNav() {
         </DropdownMenuItem>
         {role === 'admin' && (
           <>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="text-xs text-primary uppercase">
+              Administrator
+            </DropdownMenuLabel>
             <DropdownMenuItem onClick={() => navigate('/admin/documents')}>
               <FileText className="mr-2 h-4 w-4" />
               <span>Documents</span>
             </DropdownMenuItem>
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>
-                <Settings className="mr-2 h-4 w-4" />
-                <span>Settings</span>
-              </DropdownMenuSubTrigger>
-              <DropdownMenuPortal>
-                <DropdownMenuSubContent>
-                  <DropdownMenuItem
-                    onClick={() => navigate('/admin/settings/llm')}
-                  >
-                    <span>LLM</span>
-                  </DropdownMenuItem>
-                </DropdownMenuSubContent>
-              </DropdownMenuPortal>
-            </DropdownMenuSub>
+            <DropdownMenuItem onClick={() => navigate('/admin/settings/llm')}>
+              <Settings className="mr-2 h-4 w-4" />
+              <span>LLM Settings</span>
+            </DropdownMenuItem>
           </>
         )}
         <DropdownMenuSeparator />
