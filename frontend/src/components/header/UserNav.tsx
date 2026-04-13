@@ -1,5 +1,5 @@
 import capitalize from 'lodash/capitalize';
-import { FileText, LogOut, MessageSquare } from 'lucide-react';
+import { FileText, LogOut, MessageSquare, Settings } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 import { useAuth } from '@chainlit/react-client';
@@ -11,7 +11,11 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuPortal,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu';
 import { Translator } from 'components/i18n';
@@ -55,10 +59,27 @@ export default function UserNav() {
           <span>Chat</span>
         </DropdownMenuItem>
         {role === 'admin' && (
-          <DropdownMenuItem onClick={() => navigate('/admin/documents')}>
-            <FileText className="mr-2 h-4 w-4" />
-            <span>Documents</span>
-          </DropdownMenuItem>
+          <>
+            <DropdownMenuItem onClick={() => navigate('/admin/documents')}>
+              <FileText className="mr-2 h-4 w-4" />
+              <span>Documents</span>
+            </DropdownMenuItem>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <Settings className="mr-2 h-4 w-4" />
+                <span>Settings</span>
+              </DropdownMenuSubTrigger>
+              <DropdownMenuPortal>
+                <DropdownMenuSubContent>
+                  <DropdownMenuItem
+                    onClick={() => navigate('/admin/settings/llm')}
+                  >
+                    <span>LLM</span>
+                  </DropdownMenuItem>
+                </DropdownMenuSubContent>
+              </DropdownMenuPortal>
+            </DropdownMenuSub>
+          </>
         )}
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={() => logout(true)}>
