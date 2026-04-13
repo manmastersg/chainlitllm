@@ -2,6 +2,7 @@ import chainlit as cl
 from openai import AsyncOpenAI
 import traceback
 import time
+import json
 
 # LLM Configuration
 client = AsyncOpenAI(
@@ -28,15 +29,17 @@ async def auth_callback(username: str, password: str):
 
 @cl.on_chat_start
 async def start():
-    user = cl.user_session.get("user")
-    role = user.metadata.get("role", "unknown")
-    
-    # Initialize message history
-    cl.user_session.set("history", [{"role": "system", "content": "You are a helpful assistant."}])
-    
-    await cl.Message(
-        content=f"Welcome {user.display_name}! Your authenticated role is: **{role}**. You can now chat with the LLM."
-    ).send()
+    # Only greet and initialize if this is a fresh session
+    if cl.user_session.get("history") is None:
+        user = cl.user_session.get("user")
+        role = user.metadata.get("role", "unknown")
+        
+        # Initialize message history
+        cl.user_session.set("history", [{"role": "system", "content": "You are a helpful assistant. Provide direct textual answers. Do NOT attempt to use functions or tool calls."}])
+        
+        await cl.Message(
+            content=f"Welcome {user.display_name}! Your authenticated role is: **{role}**. You can now chat with the LLM."
+        ).send()
 
 @cl.on_message
 async def main(message: cl.Message):
@@ -66,6 +69,9 @@ async def main(message: cl.Message):
                 "enable_thinking": False
             }
         )
+        
+        # DEBUG: Log the raw response structure
+        print(f"DEBUG LLM Response: {response.model_dump_json()}")
         
         # End timer
         end_time = time.perf_counter()
@@ -101,7 +107,9 @@ async def main(message: cl.Message):
                 ]
             ).send()
         else:
-            await cl.Message(content="Error: Received empty response from LLM.").send()
+            # Handle empty content (log raw response for debugging)
+            debug_info = f"\n\nRaw Response: ```json\n{response.model_dump_json(indent=2)}\n```"
+            await cl.Message(content=f"Error: Received empty response from LLM.{debug_info}").send()
 
     except Exception as e:
         error_msg = f"An error occurred: {str(e)}\n\n```\n{traceback.format_exc()}\n```"
