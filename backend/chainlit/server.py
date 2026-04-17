@@ -802,6 +802,36 @@ async def project_translations(
     )
 
 
+@router.get("/llm-settings")
+async def get_llm_settings(current_user: UserParam):
+    """Return the LLM settings from llm_settings.json."""
+
+    # Path to the llm_settings.json file relative to the project root
+    # Since server.py is in backend/chainlit/
+    # The current working directory is backend/ when started via start_chainlitsrc.sh
+    settings_path = os.path.join(os.getcwd(), "llm_settings.json")
+
+    if not os.path.exists(settings_path):
+        # Try one more level up just in case
+        settings_path = os.path.join(os.getcwd(), "backend", "llm_settings.json")
+
+    if not os.path.exists(settings_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"llm_settings.json not found at {settings_path} (CWD: {os.getcwd()})",
+        )
+
+    try:
+        with open(settings_path, "r") as f:
+            settings = json.load(f)
+        return JSONResponse(content=settings)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error reading llm_settings.json: {str(e)}",
+        )
+
+
 @router.get("/project/settings")
 async def project_settings(
     current_user: UserParam,
