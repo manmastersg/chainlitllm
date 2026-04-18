@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, List, Optional, Union, cast
 import socketio
 from fastapi import (
     APIRouter,
+    Body,
     Depends,
     FastAPI,
     Form,
@@ -226,6 +227,13 @@ build_dir = get_build_dir("frontend", "frontend")
 copilot_build_dir = get_build_dir(os.path.join("libs", "copilot"), "copilot")
 
 app = FastAPI(lifespan=lifespan)
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    logger.info(f"Incoming request: {request.method} {request.url.path}")
+    response = await call_next(request)
+    logger.info(f"Response status: {response.status_code}")
+    return response
 
 sio = socketio.AsyncServer(cors_allowed_origins=[], async_mode="asgi")
 
@@ -802,33 +810,89 @@ async def project_translations(
     )
 
 
-@router.get("/llm-settings")
+@app.get("/project/llm-settings")
+@router.get("/project/llm-settings")
 async def get_llm_settings(current_user: UserParam):
     """Return the LLM settings from llm_settings.json."""
+    logger.info(f"LLM settings requested by user: {current_user.identifier}")
 
-    # Path to the llm_settings.json file relative to the project root
-    # Since server.py is in backend/chainlit/
-    # The current working directory is backend/ when started via start_chainlitsrc.sh
-    settings_path = os.path.join(os.getcwd(), "llm_settings.json")
-
-    if not os.path.exists(settings_path):
-        # Try one more level up just in case
-        settings_path = os.path.join(os.getcwd(), "backend", "llm_settings.json")
+    # Look for llm_settings.json in the parent of BACKEND_ROOT (the backend/ directory)
+    settings_path = os.path.join(os.path.dirname(BACKEND_ROOT), "llm_settings.json")
+    logger.info(f"Resolving llm_settings.json at: {settings_path}")
 
     if not os.path.exists(settings_path):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"llm_settings.json not found at {settings_path} (CWD: {os.getcwd()})",
+            detail=f"llm_settings.json not found at {settings_path}",
         )
 
     try:
-        with open(settings_path, "r") as f:
+        with open(settings_path) as f:
             settings = json.load(f)
         return JSONResponse(content=settings)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error reading llm_settings.json: {str(e)}",
+            detail=f"Error reading llm_settings.json: {e!s}",
+        )
+
+
+@app.post("/project/llm-settings")
+@router.post("/project/llm-settings")
+async def update_llm_settings(
+    current_user: UserParam,
+    new_settings: dict = Body(...),
+):
+    """Update the LLM settings in llm_settings.json."""
+    if current_user.metadata.get("role") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can update LLM settings",
+        )
+
+    logger.info(f"LLM settings update requested by admin: {current_user.identifier}")
+
+    settings_path = os.path.join(os.path.dirname(BACKEND_ROOT), "llm_settings.json")
+
+    try:
+        # 1. Read existing settings
+        with open(settings_path) as f:
+            data = json.load(f)
+
+        # 2. Update the first provider (or the one matching an ID if provided)
+        # For simplicity, we update the first provider as it's the primary one in this app
+        if "providers" in data and len(data["providers"]) > 0:
+            provider = data["providers"][0]
+            # Update only allowed fields to prevent structure corruption
+            allowed_fields = [
+                "api_key",
+                "base_url",
+                "model",
+                "enable_thinking",
+                "enable_streaming",
+                "is_active",
+            ]
+            for field in allowed_fields:
+                if field in new_settings:
+                    provider[field] = new_settings[field]
+
+            # 3. Write back to file
+            with open(settings_path, "w") as f:
+                json.dump(data, f, indent=2)
+
+            logger.info("llm_settings.json updated successfully")
+            return JSONResponse(content={"success": True, "settings": provider})
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No providers found in configuration",
+            )
+
+    except Exception as e:
+        logger.error(f"Failed to update LLM settings: {e!s}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating llm_settings.json: {e!s}",
         )
 
 

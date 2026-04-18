@@ -6,6 +6,7 @@ import AuthCallback from 'pages/AuthCallback';
 import Element from 'pages/Element';
 import Env from 'pages/Env';
 import Home from 'pages/Home';
+import LLMSettings from 'pages/LLMSettings';
 import Login from 'pages/Login';
 import Thread from 'pages/Thread';
 
@@ -18,6 +19,10 @@ export const router = createBrowserRouter(
     {
       path: '/admin/documents',
       element: <AdminDocuments />
+    },
+    {
+      path: '/admin/settings/llm',
+      element: <LLMSettings />
     },
     {
       path: '/env',

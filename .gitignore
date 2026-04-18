@@ -62,3 +62,13 @@ dist-ssr
 .dmypy.json
 
 .history
+package.json
+cookies.txt
+
+# Environment and lock files
+.npmrc
+pnpm-lock.yaml
+
+# IDE/Editor settings
+.cursor/
+.claude/

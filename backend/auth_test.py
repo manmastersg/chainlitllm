@@ -3,12 +3,28 @@ from openai import AsyncOpenAI
 import traceback
 import time
 import json
+import os
 
-# LLM Configuration
+# Load LLM Configuration from llm_settings.json
+def load_llm_config():
+    config_path = os.path.join(os.path.dirname(__file__), "llm_settings.json")
+    with open(config_path, "r") as f:
+        config = json.load(f)
+    
+    # Get the first active provider
+    active_provider = next((p for p in config["providers"] if p.get("is_active")), config["providers"][0])
+    return active_provider
+
+llm_config = load_llm_config()
+
+# Initialize OpenAI client
 client = AsyncOpenAI(
-    base_url="http://127.0.0.1:3000/openai-qwen-oauth/v1",
-    api_key="admin123"
+    base_url=llm_config["base_url"],
+    api_key=llm_config["api_key"]
 )
+
+# Model name from config
+MODEL_NAME = llm_config["model"]
 
 # Temporary user store
 users = {
@@ -38,7 +54,7 @@ async def start():
         cl.user_session.set("history", [{"role": "system", "content": "You are a helpful assistant. Provide direct textual answers. Do NOT attempt to use functions or tool calls."}])
         
         await cl.Message(
-            content=f"Welcome {user.display_name}! Your authenticated role is: **{role}**. You can now chat with the LLM."
+            content=f"Welcome {user.display_name}! Your authenticated role is: **{role}**. You can now chat with the LLM using **{MODEL_NAME}**."
         ).send()
 
 @cl.on_message
@@ -60,13 +76,13 @@ async def main(message: cl.Message):
         status_msg = cl.Message(content="*Thinking...*", author="System")
         await status_msg.send()
 
-        # Call OpenAI (Qwen) with streaming DISABLED
+        # Call LLM with streaming DISABLED
         response = await client.chat.completions.create(
-            model="qwen3.6-plus",
+            model=MODEL_NAME,
             messages=history,
             stream=False,
             extra_body={
-                "enable_thinking": False
+                "enable_thinking": llm_config.get("enable_thinking", False)
             }
         )
         
