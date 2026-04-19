@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { Loader2, Save } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 import { Navigate } from 'react-router-dom';
 import { z } from 'zod';
 
@@ -68,6 +68,7 @@ const LLMSettings = () => {
     register,
     handleSubmit,
     reset,
+    control,
     formState: { errors, isDirty, isValid }
   } = useForm({
     resolver: zodResolver(llmSettingsSchema),
@@ -351,7 +352,16 @@ const LLMSettings = () => {
                           </p>
                         </div>
                       </div>
-                      <Switch {...register('enable_streaming')} />
+                      <Controller
+                        name="enable_streaming"
+                        control={control}
+                        render={({ field }) => (
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        )}
+                      />
                     </div>
 
                     <div className="flex items-center justify-between py-2">
@@ -366,7 +376,16 @@ const LLMSettings = () => {
                           </p>
                         </div>
                       </div>
-                      <Switch {...register('enable_thinking')} />
+                      <Controller
+                        name="enable_thinking"
+                        control={control}
+                        render={({ field }) => (
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        )}
+                      />
                     </div>
 
                     <Separator />
@@ -383,7 +402,16 @@ const LLMSettings = () => {
                           </p>
                         </div>
                       </div>
-                      <Switch {...register('is_active')} />
+                      <Controller
+                        name="is_active"
+                        control={control}
+                        render={({ field }) => (
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        )}
+                      />
                     </div>
                   </CardContent>
                 </Card>
