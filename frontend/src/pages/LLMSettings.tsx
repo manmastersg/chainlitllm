@@ -4,7 +4,6 @@ import {
   Activity,
   CheckCircle2,
   Clock,
-  Cpu,
   Layers,
   Settings2,
   XCircle,
@@ -250,19 +249,6 @@ const LLMSettings = () => {
                     <CardContent>
                       <span className="text-2xl font-bold uppercase">
                         {settings.provider_type}
-                      </span>
-                    </CardContent>
-                  </Card>
-
-                  <Card className="bg-card/50 backdrop-blur-sm border-primary/20 shadow-lg">
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-                        <Cpu size={16} /> Provider ID
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <span className="text-2xl font-bold truncate block">
-                        {settings.provider_id}
                       </span>
                     </CardContent>
                   </Card>
