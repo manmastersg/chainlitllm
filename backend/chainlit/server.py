@@ -865,6 +865,7 @@ async def update_llm_settings(
             provider = data["providers"][0]
             # Update only allowed fields to prevent structure corruption
             allowed_fields = [
+                "name",
                 "api_key",
                 "base_url",
                 "model",
