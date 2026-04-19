@@ -54,7 +54,7 @@ async def start():
         cl.user_session.set("history", [{"role": "system", "content": "You are a helpful assistant. Provide direct textual answers. Do NOT attempt to use functions or tool calls."}])
         
         await cl.Message(
-            content=f"Welcome {user.display_name}! Your authenticated role is: **{role}**. You can now chat with the LLM using **{MODEL_NAME}**."
+            content=f"Welcome {user.display_name}! Your authenticated role is: **{role}**."
         ).send()
 
 @cl.on_message
