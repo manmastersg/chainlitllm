@@ -35,14 +35,40 @@ const useUpload = ({ onError, onResolved, options, spec }: useUploadProps) => {
   let dzAccept: Record<string, string[]> = {};
   const accept = spec.accept;
 
+  const isValidMimeType = (mimeType: string): boolean => {
+    if (mimeType === '*/*') return false;
+    const validWildcards = ['image/*', 'audio/*', 'video/*'];
+    if (validWildcards.includes(mimeType)) return true;
+    return true;
+  };
+
   if (Array.isArray(accept)) {
     accept.forEach((a) => {
-      if (typeof a === 'string') {
+      if (typeof a === 'string' && isValidMimeType(a)) {
         dzAccept[a] = [];
       }
     });
   } else if (typeof accept === 'object') {
-    dzAccept = accept;
+    Object.entries(accept).forEach(([key, value]) => {
+      if (isValidMimeType(key)) {
+        dzAccept[key] = value || [];
+      }
+    });
+  }
+
+  if (Object.keys(dzAccept).length === 0) {
+    dzAccept = {
+      'application/pdf': [],
+      'image/*': [],
+      'application/msword': [],
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+        [],
+      'application/vnd.ms-excel': [],
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': [],
+      'application/vnd.ms-powerpoint': [],
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation':
+        []
+    };
   }
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({

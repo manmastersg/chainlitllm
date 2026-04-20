@@ -72,3 +72,7 @@ pnpm-lock.yaml
 # IDE/Editor settings
 .cursor/
 .claude/
+
+# Backup files
+backend/chainlit/server.py.*
+frontend/src/components/ui/*.backup
