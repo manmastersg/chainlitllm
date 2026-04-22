@@ -63,8 +63,11 @@
 
 ### Task 1: Add PageIndex + OpenAI Agents dependencies to pyproject.toml — ✅ DONE
 
-- Commit: `a9a2b9a5` — "chore: add pageindex, litellm, openai-agents deps + storage dirs"
-- Added: `pageindex>=1.0.0`, `litellm>=1.83.0`, `openai-agents>=1.0.0`, `pypdf>=5.0.0`, `pyyaml>=6.0.0`
+### Task 1: Add PageIndex + OpenAI Agents dependencies to pyproject.toml — ✅ DONE
+
+- Commit: `a9a2b9a5` → `0163f64c` (fix versions)
+- Added: `pageindex>=0.3.0.dev0`, `litellm>=1.83.0`, `openai-agents>=0.2.0`, `pypdf>=5.0.0`, `pyyaml>=6.0.0`
+- Also fixed: `requires-python = ">=3.10,<3.13"` (excludes Python 3.13 dep conflicts)
 
 ### Task 2: Create storage directory for uploaded PDFs — ✅ DONE
 
