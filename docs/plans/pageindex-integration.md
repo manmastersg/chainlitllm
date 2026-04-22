@@ -85,89 +85,18 @@
 - Commit: `5c2cce1a` (import fix)
 - Created: `backend/pageindex_service.py` with PageIndexService singleton, LLM routing, agentic retrieval
 
-**Objective:** Build a `PageIndexService` singleton that:
-
-1. Stores PDFs to disk and indexes them via `PageIndexClient`
-2. Uses the **OpenAI Agents SDK** for agentic retrieval — the agent reasons over the document tree and calls tools (`get_document`, `get_document_structure`, `get_page_content`) to answer questions
-3. **CRITICAL:** Routes to YOUR configured LLM provider (opencode/minimax) — not OpenAI's default API
-4. Manages document metadata across restarts
-5. Includes an LLM-based "Router" to decide if the query needs document context
-
-**Files:**
-
-- Create: `backend/pageindex_service.py`
-
-**Step 1: Write the service**
-
-The service MUST include these key methods:
-
-```python
-class PageIndexService:
-    def _load_llm_config(self) -> dict:
-        """Load LLM config from llm_settings.json."""
-        import json
-        config_path = Path(__file__).parent / "llm_settings.json"
-        with open(config_path) as f:
-            config = json.load(f)
-        return next(p for p in config["providers"] if p.get("is_active"))
-
-    def _get_openai_client(self) -> AsyncOpenAI:
-        """Get AsyncOpenAI client configured with YOUR provider."""
-        config = self._load_llm_config()
-        return AsyncOpenAI(
-            base_url=config["base_url"],  # https://opencode.ai/zen/v1
-            api_key=config["api_key"],
-        )
-
-    def _run_agent_for_doc(self, doc_id, doc_name, query, model):
-        """Run agent with custom client to route to YOUR provider."""
-        from agents import Agent, Runner, function_tool
-        from agents.models import OpenAIChatCompletionsModel
-
-        openai_client = self._get_openai_client()
-        llm_config = self._load_llm_config()
-
-        # Use OpenAIChatCompletionsModel with your custom client
-        chat_model = OpenAIChatCompletionsModel(
-            model=llm_config["model"],  # minimax-m2.5-free
-            openai_client=openai_client,  # routes to opencode.ai/zen/v1
-        )
-
-        agent = Agent(
-            model=chat_model,  # <-- CRITICAL: use chat_model, not string
-            tools=[get_document, get_document_structure, get_page_content],
-            ...
-        )
-        result = Runner.run_sync(agent, query)
-        return result.final_output
-```
-
-**Step 2: Commit**
-
-```bash
-git add backend/pageindex_service.py
-git commit -m "feat: add PageIndexService with agentic retrieval & router"
-```
+**Next step:** Continue to Task 4 (API endpoints).
 
 ---
 
-### Task 4: Add API endpoints for PageIndex document management
-
-**Objective:** Add FastAPI endpoints for uploading, listing, retrieving, and deleting documents.
-
-**Files:**
-
-- Modify: `backend/chainlit/server.py`
-
-**Step 1: Add the endpoints after the llm-settings section**
-_(Adding docs management, status, and upload/delete endpoints)_
-
-**Step 2: Commit**
-
-```bash
-git add backend/chainlit/server.py
-git commit -m "feat: add PageIndex REST API endpoints for document management"
-```
+### Task 4: Add API endpoints for PageIndex document management — ✅ DONE
+- Commit: `8f53b6a0` — "feat: add PageIndex REST API endpoints"
+- Added 7 endpoints in `backend/chainlit/server.py`:
+  - GET/POST /project/pageindex/documents
+  - GET /project/pageindex/documents/status
+  - GET/DELETE /project/pageindex/documents/{doc_id}
+  - GET /project/pageindex/documents/{doc_id}/structure
+  - GET /project/pageindex/documents/{doc_id}/content
 
 ### Task 4b: Test the API endpoints
 
