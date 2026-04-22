@@ -8,12 +8,34 @@ import json
 import os
 import threading
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
-# PageIndex imports
-from pageindex import LocalClient
-from pageindex.client import IndexConfig
+# ─────────────────────────────────────────────────────────────────────────────
+# Configure litellm BEFORE PageIndex is imported
+# PageIndex calls litellm internally, so env vars must be set first.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_config_path = Path(__file__).parent / "llm_settings.json"
+if _config_path.exists():
+    with open(_config_path) as f:
+        _llm_config = json.load(f)
+    for _provider in _llm_config.get("providers", []):
+        if _provider.get("is_active"):
+            # litellm uses OPENAI_API_BASE and OPENAI_API_KEY for OpenAI-compatible APIs
+            os.environ["OPENAI_API_BASE"] = _provider["base_url"]
+            os.environ["OPENAI_API_KEY"] = _provider["api_key"]
+            # Provider-prefixed model so litellm routes to the right endpoint
+            _provider_type = _provider.get("provider_type", "openai")
+            _raw_model = _provider["model"]
+            # litellm model format: "provider/model" (e.g., "openai/minimax-m2.5-free")
+            _LITELLM_MODEL = _provider_type + "/" + _raw_model
+            break
+else:
+    _LITELLM_MODEL = "gpt-4o-2024-11-20"
+
+# PageIndex imports (after litellm env vars are configured)
+from pageindex import LocalClient  # noqa: E402
+from pageindex.client import IndexConfig  # noqa: E402
 
 
 class PageIndexService:
@@ -94,12 +116,9 @@ class PageIndexService:
     def _pageindex_client(self) -> LocalClient:
         """Lazy-init PageIndex client."""
         if self._client is None:
-            llm_config = self._load_llm_config()
-            
-            # IndexConfig with user's model
+            # IndexConfig with provider-prefixed model for litellm routing
             index_config = IndexConfig(
-                model=llm_config["model"],
-                # retrieve_model defaults to model if not specified
+                model=_LITELLM_MODEL,
             )
             
             self._client = LocalClient(
@@ -141,8 +160,8 @@ class PageIndexService:
         Returns:
             dict with doc_id, filename, status, page_count
         """
-        from pathlib import Path
         import time
+        from pathlib import Path
         
         file_path = Path(file_path)
         if not file_path.exists():
@@ -300,7 +319,6 @@ class PageIndexService:
         llm_config = self._load_llm_config()
         
         # Create custom model that routes to user's provider
-        from openai import AsyncOpenAI
         from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
         
         openai_client = self._get_openai_client()
