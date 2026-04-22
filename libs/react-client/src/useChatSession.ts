@@ -492,6 +492,11 @@ const useChatSession = () => {
             break;
         }
       });
+
+      socket.on('pageindex_progress', (data: { step: number; total: number; percent: number; message: string }) => {
+        const event = new CustomEvent('pageindex_progress', { detail: data });
+        window.dispatchEvent(event);
+      });
     },
     [setSession, sessionId, idToResume, chatProfile]
   );

@@ -24,3 +24,16 @@ export const persistentCommandState = atom<ICommand | undefined>({
   key: 'PersistentCommand',
   default: undefined
 });
+
+export interface IPageIndexProgress {
+  step: number;
+  total: number;
+  percent: number;
+  message: string;
+  timestamp: number;
+}
+
+export const pageindexProgressState = atom<IPageIndexProgress | null>({
+  key: 'PageIndexProgress',
+  default: null
+});

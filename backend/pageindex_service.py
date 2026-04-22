@@ -37,6 +37,14 @@ else:
 from pageindex import LocalClient  # noqa: E402
 from pageindex.client import IndexConfig  # noqa: E402
 
+# ─────────────────────────────────────────────────────────────────────────────
+# litellm global settings (applies to all PageIndex internal LLM calls)
+# ─────────────────────────────────────────────────────────────────────────────
+import litellm
+
+litellm.request_timeout = 120  # seconds per LLM call — prevents indefinite hangs
+litellm.max_retries = 2        # reduced from PageIndex default of 10 to fail fast
+
 
 class PageIndexService:
     """
@@ -119,6 +127,8 @@ class PageIndexService:
             # IndexConfig with provider-prefixed model for litellm routing
             index_config = IndexConfig(
                 model=_LITELLM_MODEL,
+                max_page_num_each_node=10,      # was: unlimited — split large nodes sooner
+                max_token_num_each_node=8000,   # was: 20000 — smaller chunks = fewer LLM calls
             )
             
             self._client = LocalClient(
@@ -172,8 +182,25 @@ class PageIndexService:
         dest_path = self._storage_path / f"{doc_id}.pdf"
         
         import shutil
+        import PyPDF2
         shutil.copy2(file_path, dest_path)
-        
+
+        # Count pages to estimate LLM call budget for progress bar
+        try:
+            with open(dest_path, 'rb') as f:
+                page_count = len(PyPDF2.PdfReader(f).pages)
+        except Exception:
+            page_count = 0
+
+        # Rough estimate: ~3 LLM calls per group of ~8 pages (TOC init + continue + verify)
+        # Plus 1 call per page for token counting
+        estimated_llm_calls = max(page_count, 1) * 4
+        try:
+            from pageindex.utils import _start_pageindex_run
+            _start_pageindex_run(estimated_llm_calls)
+        except Exception:
+            pass  # non-fatal
+
         # Add to PageIndex
         returned_doc_id = self._collection.add(str(dest_path))
         
