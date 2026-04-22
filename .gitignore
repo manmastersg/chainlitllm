@@ -76,3 +76,6 @@ pnpm-lock.yaml
 # Backup files
 backend/chainlit/server.py.*
 frontend/src/components/ui/*.backup
+
+# PageIndex — uploaded PDFs and index trees (persistent, per-instance)
+backend/data/pageindex_documents/
