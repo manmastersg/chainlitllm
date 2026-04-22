@@ -897,6 +897,204 @@ async def update_llm_settings(
         )
 
 
+# ═══════════════════════════════════════════════════════════════════════════════════════
+# PageIndex Document Management API
+# ═══════════════════════════════════════════════════════════════════════════════════════
+
+def _get_pageindex_service():
+    """Get the PageIndexService singleton."""
+    from pageindex_service import get_pageindex_service
+
+    return get_pageindex_service()
+
+
+@app.get("/project/pageindex/documents/status")
+@router.get("/project/pageindex/documents/status")
+async def get_pageindex_status(current_user: UserParam):
+    """Return summary of indexed documents."""
+    try:
+        svc = _get_pageindex_service()
+        docs = svc.list_documents()
+        ready_docs = [d for d in docs if d.get("status") == "ready"]
+        return JSONResponse(
+            content={
+                "total": len(docs),
+                "ready": len(ready_docs),
+                "ready_doc_ids": [d["doc_id"] for d in ready_docs],
+            }
+        )
+    except Exception as e:
+        logger.error(f"PageIndex status error: {e!s}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting PageIndex status: {e!s}",
+        )
+
+
+@app.get("/project/pageindex/documents")
+@router.get("/project/pageindex/documents")
+async def list_pageindex_documents(current_user: UserParam):
+    """List all indexed documents."""
+    try:
+        svc = _get_pageindex_service()
+        docs = svc.list_documents()
+        return JSONResponse(content=docs)
+    except Exception as e:
+        logger.error(f"PageIndex list error: {e!s}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error listing documents: {e!s}",
+        )
+
+
+@app.post("/project/pageindex/documents")
+@router.post("/project/pageindex/documents")
+async def upload_pageindex_document(
+    current_user: UserParam,
+    file: UploadFile = File(...),
+):
+    """Upload and index a new PDF document."""
+    # Check admin role
+    if current_user.metadata.get("role") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can upload documents",
+        )
+
+    # Validate file type
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only PDF files are supported",
+        )
+
+    try:
+        # Save uploaded file temporarily
+        import tempfile
+        import shutil
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            shutil.copyfileobj(file.file, tmp)
+            tmp_path = tmp.name
+
+        try:
+            # Add to PageIndex
+            svc = _get_pageindex_service()
+            result = svc.add_document(tmp_path)
+
+            logger.info(
+                f"Document indexed by admin {current_user.identifier}: "
+                f"{result['doc_id']}"
+            )
+            return JSONResponse(content=result)
+        finally:
+            # Clean up temp file
+            os.unlink(tmp_path)
+
+    except Exception as e:
+        logger.error(f"PageIndex upload error: {e!s}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error uploading document: {e!s}",
+        )
+
+
+@app.get("/project/pageindex/documents/{doc_id}")
+@router.get("/project/pageindex/documents/{doc_id}")
+async def get_pageindex_document(current_user: UserParam, doc_id: str):
+    """Get document metadata."""
+    try:
+        svc = _get_pageindex_service()
+        doc = svc.get_document(doc_id)
+        if not doc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Document not found: {doc_id}",
+            )
+        return JSONResponse(content=doc)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"PageIndex get error: {e!s}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting document: {e!s}",
+        )
+
+
+@app.get("/project/pageindex/documents/{doc_id}/structure")
+@router.get("/project/pageindex/documents/{doc_id}/structure")
+async def get_pageindex_document_structure(
+    current_user: UserParam,
+    doc_id: str,
+):
+    """Get document tree structure."""
+    try:
+        svc = _get_pageindex_service()
+        structure = svc.get_document_structure(doc_id)
+        return JSONResponse(content={"doc_id": doc_id, "structure": structure})
+    except Exception as e:
+        logger.error(f"PageIndex structure error: {e!s}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting document structure: {e!s}",
+        )
+
+
+@app.get("/project/pageindex/documents/{doc_id}/content")
+@router.get("/project/pageindex/documents/{doc_id}/content")
+async def get_pageindex_page_content(
+    current_user: UserParam,
+    doc_id: str,
+    pages: str = Query(default="1-3", description="Page range like '1-3' or '5,8'"),
+):
+    """Get content of specific pages."""
+    try:
+        svc = _get_pageindex_service()
+        content = svc.get_page_content(doc_id, pages)
+        return JSONResponse(
+            content={"doc_id": doc_id, "pages": pages, "content": content}
+        )
+    except Exception as e:
+        logger.error(f"PageIndex content error: {e!s}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting page content: {e!s}",
+        )
+
+
+@app.delete("/project/pageindex/documents/{doc_id}")
+@router.delete("/project/pageindex/documents/{doc_id}")
+async def delete_pageindex_document(
+    current_user: UserParam,
+    doc_id: str,
+):
+    """Delete a document from the index."""
+    # Check admin role
+    if current_user.metadata.get("role") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can delete documents",
+        )
+
+    try:
+        svc = _get_pageindex_service()
+        result = svc.delete_document(doc_id)
+        logger.info(f"Document deleted by admin {current_user.identifier}: {doc_id}")
+        return JSONResponse(content=result)
+    except KeyError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"PageIndex delete error: {e!s}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error deleting document: {e!s}",
+        )
+
+
 @router.get("/project/settings")
 async def project_settings(
     current_user: UserParam,
