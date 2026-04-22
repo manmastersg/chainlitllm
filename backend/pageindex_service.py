@@ -301,7 +301,7 @@ class PageIndexService:
         
         # Create custom model that routes to user's provider
         from openai import AsyncOpenAI
-        from agents.models import OpenAIChatCompletionsModel
+        from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
         
         openai_client = self._get_openai_client()
         
