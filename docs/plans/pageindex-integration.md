@@ -77,11 +77,13 @@
 
 **Next step:** Run `cd backend && uv sync` to install new deps before Phase 2.
 
-\\
+\\n
 
-## Phase 2: Backend — PageIndex Service Layer
+## Phase 2: Backend — PageIndex Service Layer — ✅ DONE
 
-### Task 3: Create pageindex_service.py — the core service class
+### Task 3: Create pageindex_service.py — ✅ DONE
+- Commit: `5c2cce1a` (import fix)
+- Created: `backend/pageindex_service.py` with PageIndexService singleton, LLM routing, agentic retrieval
 
 **Objective:** Build a `PageIndexService` singleton that:
 
