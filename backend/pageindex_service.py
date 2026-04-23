@@ -40,10 +40,10 @@ from pageindex.client import IndexConfig  # noqa: E402
 # ─────────────────────────────────────────────────────────────────────────────
 # litellm global settings (applies to all PageIndex internal LLM calls)
 # ─────────────────────────────────────────────────────────────────────────────
-import litellm
+import litellm  # noqa: E402
 
-litellm.request_timeout = 120  # seconds per LLM call — prevents indefinite hangs
-litellm.max_retries = 2        # reduced from PageIndex default of 10 to fail fast
+litellm.request_timeout = 60  # seconds per LLM call — prevents indefinite hangs
+litellm.max_retries = 1        # reduced to 1 to fail fast if rate limited
 
 
 class PageIndexService:
@@ -160,66 +160,176 @@ class PageIndexService:
         with open(self._documents_meta_path, "w") as f:
             json.dump(self._documents, f, indent=2)
     
-    def add_document(self, file_path: str) -> dict:
+    def _run_indexing_background(self, doc_id: str, dest_path: Path, estimated_calls: int):
+        """Run indexing in background thread."""
+        try:
+            from pageindex.utils import _start_pageindex_run, _pageindex_call_counter
+            import time
+            import threading
+            
+            _start_pageindex_run(estimated_calls)
+            
+            # Start a polling thread to watch the pageindex internal counter
+            # and update our local dictionary so the frontend API can see it.
+            def progress_poller():
+                last_count = 0
+                while True:
+                    if doc_id not in self._documents or self._documents[doc_id].get("status") != "indexing":
+                        break
+                        
+                    current_count = _pageindex_call_counter.get("count", 0)
+                    if current_count != last_count:
+                        last_count = current_count
+                        percent = min(99, int((current_count / max(1, estimated_calls)) * 100))
+                        
+                        self._documents[doc_id]["progress"] = percent
+                        self._documents[doc_id]["completed_calls"] = current_count
+                        self._save_documents()
+                    
+                    time.sleep(1.0)
+            
+            poller_thread = threading.Thread(target=progress_poller, daemon=True)
+            poller_thread.start()
+            
+            # Run the actual heavy LLM indexing
+            try:
+                returned_doc_id = self._collection.add(str(dest_path))
+            except Exception as inner_e:
+                if "Processing failed" in str(inner_e) and estimated_calls <= 20:
+                    # PageIndex failed because the document is too small/simple (no TOC)
+                    # We will gracefully fall back to a single flat node
+                    returned_doc_id = doc_id
+                    
+                    import PyPDF2
+                    with open(dest_path, 'rb') as f_pdf:
+                        text = PyPDF2.PdfReader(f_pdf).pages[0].extract_text()
+                        
+                    # Build faked internal document metadata
+                    from pageindex.utils import count_tokens
+                    faked_meta = {
+                        "filename": dest_path.name,
+                        "page_count": 1,
+                        "token_count": count_tokens(text),
+                        "nodes": [{
+                            "node_id": "0000",
+                            "title": dest_path.stem,
+                            "summary": "Document content.",
+                            "start_index": 1,
+                            "end_index": 1
+                        }]
+                    }
+                    
+                    # Save to pageindex collection storage directly
+                    workspace_dir = self._storage_path / "default"
+                    workspace_dir.mkdir(parents=True, exist_ok=True)
+                    doc_dir = workspace_dir / returned_doc_id
+                    doc_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    with open(doc_dir / "document.json", "w") as f_meta:
+                        json.dump(faked_meta, f_meta)
+                else:
+                    raise inner_e
+            
+            # Fetch final metadata
+            doc_meta = self._collection.get_document(returned_doc_id)
+            meta = json.loads(doc_meta) if isinstance(doc_meta, str) else doc_meta
+            
+            # Mark as ready
+            if doc_id in self._documents:
+                self._documents[doc_id]["status"] = "ready"
+                self._documents[doc_id]["progress"] = 100
+                self._documents[doc_id]["page_count"] = meta.get("page_count", 0)
+                self._documents[doc_id]["doc_id"] = returned_doc_id # Update to real ID
+                
+                # Clean up temp ID if changed
+                if doc_id != returned_doc_id:
+                    self._documents[returned_doc_id] = self._documents.pop(doc_id)
+                    
+                self._save_documents()
+                
+                # Emit final completion
+                try:
+                    from chainlit.context import context as cl_context
+                    emitter = cl_context.emitter
+                    if emitter:
+                        import asyncio
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            asyncio.run_coroutine_threadsafe(
+                                emitter.emit("pageindex_progress", {
+                                    "doc_id": returned_doc_id,
+                                    "status": "ready",
+                                    "percent": 100
+                                }),
+                                loop
+                            )
+                except Exception:
+                    pass
+
+        except Exception as e:
+            print(f"PageIndex background error: {e}")
+            if doc_id in self._documents:
+                self._documents[doc_id]["status"] = "failed"
+                self._documents[doc_id]["error"] = str(e)
+                self._save_documents()
+
+    def add_document(self, file_path_str: str) -> dict:
         """
-        Add a PDF document to the index.
+        Add a PDF document to the index (asynchronous).
         
         Args:
-            file_path: Path to the PDF file
+            file_path_str: Path to the PDF file
             
         Returns:
-            dict with doc_id, filename, status, page_count
+            dict with temporary doc_id, filename, status
         """
         import time
+        import threading
         from pathlib import Path
         
-        file_path = Path(file_path)
+        file_path = Path(file_path_str)
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
         
-        # Copy file to storage
-        doc_id = file_path.stem + "_" + str(int(time.time()))
-        dest_path = self._storage_path / f"{doc_id}.pdf"
+        # Create temp doc_id and copy file
+        temp_doc_id = file_path.stem + "_" + str(int(time.time()))
+        dest_path = self._storage_path / f"{temp_doc_id}.pdf"
         
         import shutil
         import PyPDF2
         shutil.copy2(file_path, dest_path)
 
-        # Count pages to estimate LLM call budget for progress bar
+        # Count pages for budget
         try:
             with open(dest_path, 'rb') as f:
                 page_count = len(PyPDF2.PdfReader(f).pages)
         except Exception:
             page_count = 0
 
-        # Rough estimate: ~3 LLM calls per group of ~8 pages (TOC init + continue + verify)
-        # Plus 1 call per page for token counting
         estimated_llm_calls = max(page_count, 1) * 4
-        try:
-            from pageindex.utils import _start_pageindex_run
-            _start_pageindex_run(estimated_llm_calls)
-        except Exception:
-            pass  # non-fatal
-
-        # Add to PageIndex
-        returned_doc_id = self._collection.add(str(dest_path))
         
-        # Get document metadata
-        doc_meta = self._collection.get_document(returned_doc_id)
-        meta = json.loads(doc_meta) if isinstance(doc_meta, str) else doc_meta
-        
-        # Store metadata
-        self._documents[returned_doc_id] = {
-            "doc_id": returned_doc_id,
+        # Store initial pending state
+        self._documents[temp_doc_id] = {
+            "doc_id": temp_doc_id,
             "filename": file_path.name,
-            "status": "ready",
-            "page_count": meta.get("page_count", 0),
+            "status": "indexing",
+            "page_count": page_count,
+            "progress": 0,
+            "total_calls": estimated_llm_calls,
             "added_at": time.time(),
             "path": str(dest_path),
         }
         self._save_documents()
         
-        return self._documents[returned_doc_id]
+        # Start background processing
+        thread = threading.Thread(
+            target=self._run_indexing_background,
+            args=(temp_doc_id, dest_path, estimated_llm_calls),
+            daemon=True
+        )
+        thread.start()
+        
+        return self._documents[temp_doc_id]
     
     def list_documents(self) -> list:
         """List all indexed documents."""

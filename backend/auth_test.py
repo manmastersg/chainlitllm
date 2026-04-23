@@ -4,6 +4,8 @@ import traceback
 import time
 import json
 import os
+import asyncio
+from pageindex_service import get_pageindex_service
 
 # Load LLM Configuration from llm_settings.json
 def load_llm_config():
@@ -72,14 +74,31 @@ async def main(message: cl.Message):
         # Start timer
         start_time = time.perf_counter()
         
-        # Show a "Thinking" status
-        status_msg = cl.Message(content="*Thinking...*", author="System")
+        # Search knowledge base
+        status_msg = cl.Message(content="*Searching knowledge base...*", author="System")
         await status_msg.send()
+        
+        svc = get_pageindex_service()
+        # Use asyncio.to_thread to avoid blocking the event loop while querying
+        context = await asyncio.to_thread(svc.build_rag_context, message.content)
+        
+        # Show a "Thinking" status
+        status_msg.content = "*Thinking...*"
+        await status_msg.update()
+
+        # Prepare messages for LLM (include context if found)
+        llm_messages = history.copy()
+        if context:
+            # Prepend context to the last user message for the LLM prompt
+            # We don't save this to history to avoid bloating it
+            last_msg = llm_messages[-1].copy()
+            last_msg["content"] = context + last_msg["content"]
+            llm_messages[-1] = last_msg
 
         # Call LLM with streaming DISABLED
         response = await client.chat.completions.create(
             model=MODEL_NAME,
-            messages=history,
+            messages=llm_messages,
             stream=False,
             extra_body={
                 "enable_thinking": llm_config.get("enable_thinking", False)
