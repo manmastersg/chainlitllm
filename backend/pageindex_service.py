@@ -7,8 +7,11 @@ Routes to the user's configured LLM (from llm_settings.json), not OpenAI default
 import json
 import os
 import threading
+import logging
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger("pageindex_service")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Configure litellm BEFORE PageIndex is imported
@@ -36,6 +39,9 @@ else:
 # PageIndex imports (after litellm env vars are configured)
 from pageindex import LocalClient  # noqa: E402
 from pageindex.client import IndexConfig  # noqa: E402
+from agents import set_tracing_disabled  # noqa: E402
+
+set_tracing_disabled(True)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # litellm global settings (applies to all PageIndex internal LLM calls)
@@ -86,6 +92,7 @@ class PageIndexService:
         
         # Load persisted document metadata
         self._load_documents()
+        logger.info("DEBUG: PageIndexService initialized. Loaded %d documents.", len(self._documents))
         
         self._initialized = True
     
@@ -238,7 +245,14 @@ class PageIndexService:
             if doc_id in self._documents:
                 self._documents[doc_id]["status"] = "ready"
                 self._documents[doc_id]["progress"] = 100
-                self._documents[doc_id]["page_count"] = meta.get("page_count", 0)
+                
+                # Page count might be in 'page_count' or length of 'pages' list
+                page_count = meta.get("page_count")
+                if page_count is None and "pages" in meta:
+                    pages = meta["pages"]
+                    page_count = len(pages) if isinstance(pages, list) else 0
+                
+                self._documents[doc_id]["page_count"] = page_count or 0
                 self._documents[doc_id]["doc_id"] = returned_doc_id # Update to real ID
                 
                 # Clean up temp ID if changed
@@ -267,7 +281,7 @@ class PageIndexService:
                     pass
 
         except Exception as e:
-            print(f"PageIndex background error: {e}")
+            logger.error("PageIndex background error: %s", e)
             if doc_id in self._documents:
                 self._documents[doc_id]["status"] = "failed"
                 self._documents[doc_id]["error"] = str(e)
@@ -417,6 +431,7 @@ class PageIndexService:
         Returns:
             Agent's answer string
         """
+        logger.info("DEBUG: PageIndexService.query called with question: %s", question)
         # Create agent tools using the collection
         from agents import Agent, Runner, function_tool
         
@@ -483,7 +498,8 @@ Important:
         )
         
         # Run the agent
-        result = Runner.run_sync(agent, question)
+        from agents import RunConfig
+        result = Runner.run_sync(agent, question, run_config=RunConfig(tracing_disabled=True))
         return result.final_output
     
     def build_rag_context(self, user_message: str) -> str:
@@ -512,8 +528,8 @@ The following information is from your knowledge base:
 ---
 """
                 return context
-        except Exception as e:
-            print(f"PageIndex query error: {e}")
+        except Exception:
+            logger.exception("PageIndex query error")
         
         return ""
 

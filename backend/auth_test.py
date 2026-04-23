@@ -105,9 +105,6 @@ async def main(message: cl.Message):
             }
         )
         
-        # DEBUG: Log the raw response structure
-        print(f"DEBUG LLM Response: {response.model_dump_json()}")
-        
         # End timer
         end_time = time.perf_counter()
         duration = end_time - start_time
