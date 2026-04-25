@@ -47,6 +47,54 @@ set_tracing_disabled(True)
 # litellm global settings (applies to all PageIndex internal LLM calls)
 # ─────────────────────────────────────────────────────────────────────────────
 import litellm  # noqa: E402
+from contextvars import ContextVar
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Monkey-patching PageIndex for granular progress events
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Track which doc is being indexed in the current thread
+_indexing_context = ContextVar("indexing_doc_id", default=None)
+
+def _update_indexing_progress(percent: int):
+    doc_id = _indexing_context.get()
+    if doc_id and PageIndexService._instance:
+        svc = PageIndexService._instance
+        if doc_id in svc._documents:
+            # Only move forward
+            current = svc._documents[doc_id].get("progress", 0)
+            if percent > current:
+                svc._documents[doc_id]["progress"] = percent
+                svc._save_documents()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Robust Global Logger Interception via Handler
+# ─────────────────────────────────────────────────────────────────────────────
+class _ProgressLogHandler(logging.Handler):
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            # Progress milestones based on library log content
+            if "find_toc_pages" in msg or ("Page" in msg and "has toc" in msg): 
+                _update_indexing_progress(15)
+            elif "process_no_toc" in msg:
+                _update_indexing_progress(20)
+            elif "verify_toc" in msg or "accuracy:" in msg: 
+                _update_indexing_progress(45)
+            elif "process_large_node_recursively" in msg: 
+                _update_indexing_progress(65)
+            elif "generate_summaries" in msg: 
+                _update_indexing_progress(85)
+            elif "generate_doc_description" in msg: 
+                _update_indexing_progress(95)
+        except Exception:
+            pass
+
+_lib_root_logger = logging.getLogger("pageindex")
+_lib_root_logger.setLevel(logging.INFO)
+_lib_root_logger.addHandler(_ProgressLogHandler())
+
+
 
 litellm.request_timeout = 60  # seconds per LLM call — prevents indefinite hangs
 litellm.max_retries = 1        # reduced to 1 to fail fast if rate limited
@@ -92,9 +140,13 @@ class PageIndexService:
         
         # Load persisted document metadata
         self._load_documents()
-        logger.info("DEBUG: PageIndexService initialized. Loaded %d documents.", len(self._documents))
+        logger.info("PageIndexService initialized. Loaded %d documents.", len(self._documents))
         
         self._initialized = True
+        logger.debug("--- Initializing PageIndexService with storage path: %s", self._storage_path)
+    def _get_litellm_model(self) -> str:
+        """Return the litellm model string."""
+        return _LITELLM_MODEL
     
     # ─────────────────────────────────────────────────────────────
     # LLM Configuration
@@ -169,6 +221,9 @@ class PageIndexService:
     
     def _run_indexing_background(self, doc_id: str, dest_path: Path, estimated_calls: int):
         """Run indexing in background thread."""
+        # Set context for monkey-patch to identify which doc is being updated
+        _indexing_context.set(doc_id)
+        
         try:
             from pageindex.utils import _start_pageindex_run, _pageindex_call_counter
             import time
@@ -200,38 +255,45 @@ class PageIndexService:
             
             # Run the actual heavy LLM indexing
             try:
+                logger.debug("--- _run_indexing_background: Calling self._collection.add(%s)", dest_path)
                 returned_doc_id = self._collection.add(str(dest_path))
+                logger.debug("--- _run_indexing_background: self._collection.add returned doc_id: %s", returned_doc_id)
             except Exception as inner_e:
+                logger.error("--- _run_indexing_background: Error during PageIndex collection.add: %s", inner_e)
                 if "Processing failed" in str(inner_e) and estimated_calls <= 20:
+                    logger.warning("--- _run_indexing_background: PageIndex processing failed for small document. Falling back to flat node approach.")
                     # PageIndex failed because the document is too small/simple (no TOC)
                     # We will gracefully fall back to a single flat node
                     returned_doc_id = doc_id
-                    
+
                     import PyPDF2
-                    with open(dest_path, 'rb') as f_pdf:
-                        text = PyPDF2.PdfReader(f_pdf).pages[0].extract_text()
-                        
+                    with open(dest_path, "rb") as f_pdf:
+                        pdf_reader = PyPDF2.PdfReader(f_pdf)
+                        text = ""
+                        for page_num in range(len(pdf_reader.pages)):
+                            text += pdf_reader.pages[page_num].extract_text() + "\n"
+                    
                     # Build faked internal document metadata
                     from pageindex.utils import count_tokens
                     faked_meta = {
                         "filename": dest_path.name,
-                        "page_count": 1,
+                        "page_count": len(pdf_reader.pages),
                         "token_count": count_tokens(text),
                         "nodes": [{
                             "node_id": "0000",
                             "title": dest_path.stem,
                             "summary": "Document content.",
                             "start_index": 1,
-                            "end_index": 1
+                            "end_index": len(pdf_reader.pages)
                         }]
                     }
-                    
+
                     # Save to pageindex collection storage directly
                     workspace_dir = self._storage_path / "default"
                     workspace_dir.mkdir(parents=True, exist_ok=True)
                     doc_dir = workspace_dir / returned_doc_id
                     doc_dir.mkdir(parents=True, exist_ok=True)
-                    
+
                     with open(doc_dir / "document.json", "w") as f_meta:
                         json.dump(faked_meta, f_meta)
                 else:
@@ -247,12 +309,15 @@ class PageIndexService:
                 self._documents[doc_id]["progress"] = 100
                 
                 # Page count might be in 'page_count' or length of 'pages' list
-                page_count = meta.get("page_count")
-                if page_count is None and "pages" in meta:
+                # Prefer existing page_count if library doesn't provide a valid one
+                lib_page_count = meta.get("page_count")
+                if lib_page_count is None and "pages" in meta:
                     pages = meta["pages"]
-                    page_count = len(pages) if isinstance(pages, list) else 0
+                    lib_page_count = len(pages) if isinstance(pages, list) else None
                 
-                self._documents[doc_id]["page_count"] = page_count or 0
+                if lib_page_count is not None:
+                    self._documents[doc_id]["page_count"] = lib_page_count
+                
                 self._documents[doc_id]["doc_id"] = returned_doc_id # Update to real ID
                 
                 # Clean up temp ID if changed
@@ -279,20 +344,21 @@ class PageIndexService:
                             )
                 except Exception:
                     pass
-
+        
         except Exception as e:
             logger.error("PageIndex background error: %s", e)
             if doc_id in self._documents:
                 self._documents[doc_id]["status"] = "failed"
                 self._documents[doc_id]["error"] = str(e)
                 self._save_documents()
-
-    def add_document(self, file_path_str: str) -> dict:
+    
+    def add_document(self, file_path_str: str, original_filename: str | None = None) -> dict:
         """
         Add a PDF document to the index (asynchronous).
         
         Args:
             file_path_str: Path to the PDF file
+            original_filename: The original name of the file
             
         Returns:
             dict with temporary doc_id, filename, status
@@ -302,30 +368,39 @@ class PageIndexService:
         from pathlib import Path
         
         file_path = Path(file_path_str)
+        logger.debug("--- add_document: received file_path_str: %s", file_path_str)
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
         
-        # Create temp doc_id and copy file
-        temp_doc_id = file_path.stem + "_" + str(int(time.time()))
+        # Determine filename and doc_id
+        display_name = original_filename or file_path.name
+        temp_doc_id = Path(display_name).stem + "_" + str(int(time.time()))
         dest_path = self._storage_path / f"{temp_doc_id}.pdf"
         
+        logger.debug("--- add_document: display_name=%s, temp_doc_id=%s, dest_path=%s", display_name, temp_doc_id, dest_path)
+
         import shutil
         import PyPDF2
         shutil.copy2(file_path, dest_path)
+        logger.debug("--- add_document: file copied to: %s", dest_path)
 
         # Count pages for budget
         try:
             with open(dest_path, 'rb') as f:
-                page_count = len(PyPDF2.PdfReader(f).pages)
-        except Exception:
+                pdf_reader = PyPDF2.PdfReader(f)
+                page_count = len(pdf_reader.pages)
+                logger.debug("--- add_document: PyPDF2 page_count: %d", page_count)
+        except Exception as e:
+            logger.error("--- add_document: Error counting pages with PyPDF2: %s", e)
             page_count = 0
-
+        
         estimated_llm_calls = max(page_count, 1) * 4
+        logger.debug("--- add_document: estimated_llm_calls: %d", estimated_llm_calls)
         
         # Store initial pending state
         self._documents[temp_doc_id] = {
             "doc_id": temp_doc_id,
-            "filename": file_path.name,
+            "filename": display_name,
             "status": "indexing",
             "page_count": page_count,
             "progress": 0,
@@ -350,21 +425,45 @@ class PageIndexService:
         return list(self._documents.values())
     
     def get_document(self, doc_id: str) -> dict:
-        """Get document metadata."""
-        return self._documents.get(doc_id)
-    
+        """Get document metadata. Supports UUID or filename."""
+        logger.info("PageIndexService.get_document called with doc_id: %s", doc_id)
+        # Try direct key lookup (UUID)
+        doc = self._documents.get(doc_id)
+        if doc:
+            return doc
+            
+        # Try filename lookup
+        for d in self._documents.values():
+            if d.get("filename") == doc_id:
+                return d
+                
+        logger.warning("PageIndexService.get_document: Document NOT FOUND: %s. Available: %s", 
+                       doc_id, [(k, v.get("filename")) for k, v in self._documents.items()])
+        return None
+
+    def _resolve_doc_id(self, doc_id: str) -> str:
+        """Resolve doc_id from UUID or filename."""
+        if doc_id in self._documents:
+            return doc_id
+        for d in self._documents.values():
+            if d.get("filename") == doc_id:
+                return d["doc_id"]
+        return doc_id
+
     def get_document_structure(self, doc_id: str) -> str:
         """Get document tree structure (JSON)."""
+        doc_id = self._resolve_doc_id(doc_id)
         return self._collection.get_document_structure(doc_id)
-    
+
     def get_page_content(self, doc_id: str, pages: str) -> str:
         """
         Get content of specific pages.
         
         Args:
-            doc_id: Document ID
+            doc_id: Document ID (UUID or filename)
             pages: Page range like '1-3', '5,8', '12'
         """
+        doc_id = self._resolve_doc_id(doc_id)
         return self._collection.get_page_content(doc_id, pages)
     
     def delete_document(self, doc_id: str) -> dict:
@@ -482,7 +581,7 @@ class PageIndexService:
         )
         
         AGENT_INSTRUCTIONS = """You are a document QA assistant. Your goal is to answer the user's question based on the provided documents.
-
+ 
 Important:
 - Call get_document() first to confirm which documents are available and their page count.
 - Call get_document_structure() to identify relevant sections.
@@ -520,11 +619,11 @@ Important:
             answer = self.query(user_message)
             if answer:
                 context = f"""[Document Context]
-
+ 
 The following information is from your knowledge base:
-
+ 
 {answer}
-
+ 
 ---
 """
                 return context
