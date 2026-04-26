@@ -37,8 +37,9 @@ const useUpload = ({ onError, onResolved, options, spec }: useUploadProps) => {
 
   const isValidMimeType = (mimeType: string): boolean => {
     if (mimeType === '*/*') return false;
-    const validWildcards = ['image/*', 'audio/*', 'video/*'];
+    const validWildcards = ['image/*', 'audio/*', 'video/*', 'text/*'];
     if (validWildcards.includes(mimeType)) return true;
+    if (mimeType.endsWith('/*')) return false;
     return true;
   };
 

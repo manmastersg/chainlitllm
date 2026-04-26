@@ -55,11 +55,13 @@ const Chat = () => {
         config?.features?.spontaneous_file_upload?.max_size_mb || 500,
       max_files: config?.features?.spontaneous_file_upload?.max_files || 20,
       accept: config?.features?.spontaneous_file_upload?.accept || {
-        'application/*': [], // All application files
-        'audio/*': [], // All audio files
-        'image/*': [], // All image files
-        'text/*': [], // All text files
-        'video/*': [] // All video files
+        'application/pdf': [], // PDF
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+          [], // docx
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': [], // xlsx
+        'application/vnd.ms-powerpoint': [], // pptx
+        'text/csv': [], // csv
+        'text/plain': [] // text files
       }
     }),
     [config]
