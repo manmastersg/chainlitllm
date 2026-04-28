@@ -981,7 +981,7 @@ async def upload_pageindex_document(
         try:
             # Add to PageIndex
             svc = _get_pageindex_service()
-            result = svc.add_document(tmp_path)
+            result = svc.add_document(tmp_path, original_filename=file.filename)
 
             logger.info(
                 f"Document indexed by admin {current_user.identifier}: "
