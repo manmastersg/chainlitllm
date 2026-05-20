@@ -1,0 +1,15 @@
+{
+  "providers": [
+    {
+      "id": "05ffccd3-6617-46ca-96f2-efe395e3d68a",
+      "name": "opencode",
+      "provider_type": "openai",
+      "base_url": "https://opencode.ai/zen/v1",
+      "api_key": "sk-EGPNOmu76txJnUpzl52tMrDzUdhlCqAxX3L5dmQwrdMQ8mXeozpoVnxFQ37w4t3G",
+      "model": "minimax-m2.5-free",
+      "enable_thinking": false,
+      "enable_streaming": true,
+      "is_active": true
+    }
+  ]
+}
