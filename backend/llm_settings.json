@@ -6,7 +6,7 @@
       "provider_type": "openai",
       "base_url": "https://opencode.ai/zen/v1",
       "api_key": "sk-EGPNOmu76txJnUpzl52tMrDzUdhlCqAxX3L5dmQwrdMQ8mXeozpoVnxFQ37w4t3G",
-      "model": "minimax-m2.5-free",
+      "model": "nemotron-3-super-free",
       "enable_thinking": false,
       "enable_streaming": true,
       "is_active": true
