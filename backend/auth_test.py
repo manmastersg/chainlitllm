@@ -4,9 +4,74 @@ import re
 import time
 import traceback
 
+from httpx import AsyncClient, Limits, Timeout
 from openai import AsyncOpenAI
 
 import chainlit as cl
+
+# ---- Shared OpenAI client (reused across messages to keep httpx pool warm) ----
+_shared_openai_client = None
+_shared_client_config_hash = None  # tracks which config this client was built for
+
+
+def _get_openai_client():
+    """Return a shared AsyncOpenAI client, recreating only if the config changed."""
+    global _shared_openai_client, _shared_client_config_hash
+
+    config_path = os.path.join(os.path.dirname(__file__), "llm_settings.json")
+    with open(config_path) as f:
+        config = json.load(f)
+    active = next(
+        (p for p in config["providers"] if p.get("is_active")), config["providers"][0]
+    )
+    # Stable hash so we can detect config changes
+    cfg_hash = (active["base_url"], active["model"], active["api_key"])
+
+    if _shared_openai_client is not None and _shared_client_config_hash == cfg_hash:
+        return _shared_openai_client
+
+    # Build a shared httpx client so the connection pool persists across calls
+    http_client = AsyncClient(
+        http2=True,
+        timeout=Timeout(30.0, connect=10.0),
+        limits=Limits(max_connections=10, max_keepalive_connections=5),
+    )
+
+    _shared_openai_client = AsyncOpenAI(
+        base_url=active["base_url"],
+        api_key=active["api_key"],
+        http_client=http_client,
+    )
+    _shared_client_config_hash = cfg_hash
+    return _shared_openai_client
+
+
+async def _warm_openai_client():
+    """Send a lightweight request to warm the httpx connection pool at startup."""
+    try:
+        client = _get_openai_client()
+        # Fetch models list — cheap, fast, warms the TLS + HTTP connection
+        print("[warmup] Warming httpx connection pool...")
+        await client.models.list()
+        print("[warmup] httpx connection pool warmed (via models.list)")
+    except Exception as e:
+        print(f"[warmup] models.list() failed: {e}")
+        try:
+            # Fallback: make a tiny chat completion to warm the pool
+            print("[warmup] Retrying with trivial chat completion...")
+            model = "deepseek-v4-flash-free"
+            if _shared_client_config_hash:
+                model = _shared_client_config_hash[1]
+            await client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": "ok"}],
+                stream=False,
+                max_tokens=1,
+            )
+            print("[warmup] httpx connection pool warmed (via chat completion)")
+        except Exception as e2:
+            print(f"[warmup] all warmup attempts failed: {e2}")
+
 
 # ---- Wiki paths ----
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -180,21 +245,27 @@ def is_trivial_message(text):
 
 
 def is_list_query(text):
-    """Check if the user is asking to list/show all wiki files — bypass navigator."""
+    """Check if the user is asking to list/show all wiki files — bypass navigator.
+
+    Only matches questions about wiki *structure* itself (what pages exist),
+    NOT general 'show me all X' content questions (e.g. 'show all options').
+    """
     t = text.strip().lower()
     list_phrases = [
-        "show all",
-        "list all",
         "what files",
-        "how many",
+        "how many pages",
+        "how many files",
         "list files",
         "all pages",
         "all files",
         "show files",
-        "list of",
-        "show me all",
+        "list of pages",
+        "list of files",
         "what md",
         "what .md",
+        "file listing",
+        "page listing",
+        "wiki structure",
     ]
     return any(phrase in t for phrase in list_phrases)
 
@@ -236,6 +307,10 @@ async def start():
             [{"role": "system", "content": system_content}],
         )
 
+        # Warm the httpx connection pool BEFORE showing the welcome message,
+        # so the pool is guaranteed ready when the user types their first message.
+        await _warm_openai_client()
+
         await cl.Message(
             content=f"Welcome {user.display_name}! Your authenticated role is: **{role}**."
         ).send()
@@ -254,17 +329,34 @@ async def main(message: cl.Message):
             cl.user_session.set("history", history)
 
         start_time = time.perf_counter()
+        t_log = [("start", start_time)]
 
-        # --- Load LLM config ---
-        llm_config = load_llm_config()
-        client = AsyncOpenAI(
-            base_url=llm_config["base_url"], api_key=llm_config["api_key"]
+        # --- Get reusable OpenAI client (connection pool stays warm) ---
+        client = _get_openai_client()
+        t_log.append(("get_client", time.perf_counter()))
+
+        active_provider = next(
+            (
+                p
+                for p in json.load(
+                    open(os.path.join(os.path.dirname(__file__), "llm_settings.json"))
+                )["providers"]
+                if p.get("is_active")
+            ),
+            None,
         )
-        model_name = llm_config["model"]
+        if active_provider is None:
+            config_path = os.path.join(os.path.dirname(__file__), "llm_settings.json")
+            with open(config_path) as f:
+                active_provider = json.load(f)["providers"][0]
+        model_name = active_provider["model"]
+        stream_enabled = active_provider.get("enable_streaming", False)
+        t_log.append(("read_config", time.perf_counter()))
 
         # === PROGRESS STATUS (updates in-place) ===
         status_msg = cl.Message(content="", author="System")
         await status_msg.send()
+        t_log.append(("status_sent", time.perf_counter()))
 
         async def update_status(text):
             status_msg.content = text
@@ -326,37 +418,80 @@ async def main(message: cl.Message):
             print(f"[wiki] Skipped retrieval for trivial message: {message.content!r}")
             augmented_messages = list(history)
 
+        t_log.append(("before_api_call", time.perf_counter()))
+
         await update_status("🤖 Generating answer...")
 
         # === STREAMING ANSWER ===
-        stream_enabled = llm_config.get("enable_streaming", False)
-
         if stream_enabled:
+            t_log.append(("stream_create_start", time.perf_counter()))
             # Stream tokens into the SAME status message — no gap, no flash
             stream = await client.chat.completions.create(
                 model=model_name,
                 messages=augmented_messages,
                 stream=True,
                 extra_body={
-                    "enable_thinking": llm_config.get("enable_thinking", False)
+                    "enable_thinking": active_provider.get("enable_thinking", False)
                 },
             )
+            t_log.append(("stream_created", time.perf_counter()))
 
             full_content = ""
+            thinking_content = ""  # thinking trace if present
             first_token = True
+            first_output_token = True
             async for chunk in stream:
+                # Check for thinking/reasoning content (separate field)
                 delta = chunk.choices[0].delta if chunk.choices else None
-                if delta and delta.content:
-                    if first_token:
-                        # Clear the "Generating answer..." text, start fresh
-                        status_msg.content = ""
-                        await status_msg.update()
-                        first_token = False
-                    full_content += delta.content
-                    await status_msg.stream_token(delta.content)
+                if delta:
+                    # DeepSeek/openai-compatible thinking field
+                    chunk_thinking = getattr(delta, "reasoning_content", None) or (
+                        delta.model_extra.get("reasoning_content")
+                        if hasattr(delta, "model_extra") and delta.model_extra
+                        else None
+                    )
+                    if chunk_thinking:
+                        thinking_content += chunk_thinking
+                        continue  # Don't show thinking in the message
+                    if delta.content:
+                        if first_token:
+                            t_log.append(("first_token", time.perf_counter()))
+                            first_token = False
+                        if first_output_token and thinking_content:
+                            # First actual output token — log thinking length
+                            print(
+                                f"[thinking] {len(thinking_content)} chars of reasoning stripped"
+                            )
+                            first_output_token = False
+                            # Clear the "Generating answer..." status now that real output starts
+                            status_msg.content = ""
+                            await status_msg.update()
+                        full_content += delta.content
+                        await status_msg.stream_token(delta.content)
+
+            t_log.append(("stream_done", time.perf_counter()))
 
             end_time = time.perf_counter()
             duration = end_time - start_time
+
+            # Print breakdown
+            # Only show API-related timing tags (skip the 0ms preliminaries)
+            api_labels = {
+                "stream_create_start",
+                "stream_created",
+                "first_token",
+                "stream_done",
+            }
+            break_parts = []
+            for i in range(1, len(t_log)):
+                label, ts = t_log[i]
+                _prev_label, prev_ts = t_log[i - 1]
+                delta_ms = (ts - prev_ts) * 1000
+                print(
+                    f"[timing] {label}: +{delta_ms:.0f}ms  (cumulative: {(ts - start_time) * 1000:.0f}ms)"
+                )
+                if label in api_labels:
+                    break_parts.append(f"{label}={delta_ms:.0f}ms")
 
             # Try to extract token usage from last chunk (provider-dependent)
             usage = getattr(chunk, "usage", None)
@@ -365,9 +500,9 @@ async def main(message: cl.Message):
             )
 
             metrics_text = (
-                f"⏱️ Total: {duration:.2f}s | "
-                f"🚀 {duration / max(completion_tokens, 1):.2f} s/tok | "
-                f"📝 {completion_tokens} tokens"
+                f"⏱️ {duration:.2f}s | "
+                f"{completion_tokens} tok | "
+                f"{' | '.join(break_parts[:4])}"
             )
 
             status_msg.elements = [
@@ -382,7 +517,7 @@ async def main(message: cl.Message):
                 messages=augmented_messages,
                 stream=False,
                 extra_body={
-                    "enable_thinking": llm_config.get("enable_thinking", False)
+                    "enable_thinking": active_provider.get("enable_thinking", False)
                 },
             )
 
