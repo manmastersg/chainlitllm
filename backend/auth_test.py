@@ -499,16 +499,26 @@ async def main(message: cl.Message):
                 usage.completion_tokens if usage else len(full_content.split())
             )
 
-            metrics_text = (
-                f"⏱️ {duration:.2f}s | "
-                f"{completion_tokens} tok | "
-                f"{' | '.join(break_parts[:4])}"
-            )
+            # --- Collapsible metrics step ---
+            tok_per_s = completion_tokens / duration if duration > 0 else 0
 
-            status_msg.elements = [
-                cl.Text(name="Metrics", content=metrics_text, display="inline")
+            # Build detailed timing breakdown
+            detail_lines = [
+                f"  duration: {duration:.2f}s",
+                f"  tokens:   {completion_tokens}",
+                f"  speed:    {tok_per_s:.1f} tok/s",
+                "  phases:",
             ]
-            await status_msg.update()
+            prev_ts = start_time
+            for label, ts in t_log[1:]:
+                delta_ms = (ts - prev_ts) * 1000
+                detail_lines.append(f"    {label}: +{delta_ms:.0f}ms")
+                prev_ts = ts
+            detail = "```\n" + "\n".join(detail_lines) + "\n```"
+
+            metrics_step = cl.Step(name="⚡", type="tool")
+            metrics_step.output = detail
+            await metrics_step.send()
 
         else:
             # Non-streaming fallback
@@ -531,18 +541,20 @@ async def main(message: cl.Message):
             usage = response.usage
             completion_tokens = usage.completion_tokens if usage else 0
 
-            metrics_text = (
-                f"⏱️ Total: {duration:.2f}s | "
-                f"🚀 {completion_tokens / duration:.1f} tok/s | "
-                f"📝 {completion_tokens} tokens"
-            )
+            # --- Collapsible metrics step ---
+            tok_per_s = completion_tokens / duration if duration > 0 else 0
 
-            await cl.Message(
-                content=full_content,
-                elements=[
-                    cl.Text(name="Metrics", content=metrics_text, display="inline")
-                ],
-            ).send()
+            metrics_step = cl.Step(name="⚡", type="tool")
+            metrics_step.output = (
+                f"```\n"
+                f"  duration: {duration:.2f}s\n"
+                f"  tokens:   {completion_tokens}\n"
+                f"  speed:    {tok_per_s:.1f} tok/s\n"
+                f"```"
+            )
+            await metrics_step.send()
+
+            await cl.Message(content=full_content).send()
 
         # --- Update history ---
         if full_content:
