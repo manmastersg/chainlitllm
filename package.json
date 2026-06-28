@@ -1,0 +1,47 @@
+{
+  "devDependencies": {
+    "@eslint/compat": "^2.0.5",
+    "@eslint/js": "^10.0.1",
+    "@trivago/prettier-plugin-sort-imports": "^4.3.0",
+    "@types/react": "^18.3.28",
+    "@types/react-dom": "^18.3.7",
+    "cypress": "^14.5.4",
+    "cypress-plugin-steps": "1.2.1",
+    "cypress-split": "^1.24.31",
+    "dotenv": "^16.6.1",
+    "eslint": "^10.2.1",
+    "eslint-plugin-chai-friendly": "^1.2.0",
+    "eslint-plugin-cypress": "^6.3.1",
+    "fkill": "^9.0.0",
+    "globals": "^17.5.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^13.3.0",
+    "prettier": "^3.8.3",
+    "shell-exec": "^1.1.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.58.2"
+  },
+  "scripts": {
+    "preinstall": "npx only-allow pnpm",
+    "prepare": "husky",
+    "build": "pnpm run --recursive build",
+    "lint": "eslint",
+    "lint:fix": "pnpm lint --fix",
+    "format-check:files": "prettier --check --ignore-unknown",
+    "format-check": "pnpm format-check:files .",
+    "format:files": "pnpm format-check:files --write",
+    "format": "pnpm format-check --write",
+    "type-check": "pnpm run --parallel type-check",
+    "test": "pnpm run --recursive test",
+    "test:e2e": "cypress run",
+    "test:e2e:interactive": "cypress open"
+  },
+  "pnpm": {
+    "overrides": {
+      "braces@<3.0.3": ">=3.0.3",
+      "micromatch@<4.0.8": ">=4.0.8"
+    }
+  },
+  "packageManager": "pnpm@9.15.9"
+}
